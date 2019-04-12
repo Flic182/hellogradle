@@ -1,0 +1,128 @@
+import io.franzbecker.gradle.lombok.task.DelombokTask
+
+plugins {
+    id "io.franzbecker.gradle-lombok" version "1.14"
+    id "java"
+}
+
+description = """
+This is a simple 'Hello World' project that uses Lombok annotations to minimise
+boilerplate code and JBehave for BDD testing.  Code is de-lomboked for the
+purpose of Javadoc creation.  Test reports are written to build/docs/javadoc.
+
+Project name: ${project.name}
+"""
+
+group "com.example"
+version "1.0-SNAPSHOT"
+
+sourceCompatibility = 11
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+    compile "org.projectlombok:lombok:${property('lombok.version')}"
+    testCompile "org.jbehave:jbehave-core:${property('jbehave.version')}"
+    testCompile "org.junit.vintage:junit-vintage-engine:${property('junit.version')}"
+    testCompile "com.github.valfirst:jbehave-junit-runner:${property('jbehave.junit.runner.version')}"
+    testCompile "org.jbehave.site:jbehave-site-resources:${property('jbehave.resources.version')}:@zip"
+}
+
+def jarPath(String jarName) {
+    configurations.testCompile.find({if (it.name.startsWith(jarName)) return it.getAbsolutePath()})
+}
+
+def OUTPUT_DIR = file("${buildDir}/delombok")
+
+task delombok(type: DelombokTask) {
+    group "documentation"
+    description "Converts Lombok-annotated classes to pure Java classes for consumption by Javadoc."
+
+    dependsOn compileJava
+    outputs.dir(OUTPUT_DIR)
+    sourceSets.main.java.srcDirs.each {
+        inputs.dir(it)
+        args(it, "-d", OUTPUT_DIR)
+    }
+    doFirst {
+        OUTPUT_DIR.deleteDir()
+    }
+}
+
+task delombokHelp(type: DelombokTask) {
+    group "documentation"
+    description "Displays usage help for de-lomboking plugin."
+
+    args "--help"
+}
+
+/*
+ * Must customise standard Javadoc class to avoid complaints:
+ * Run against de-lomboked code as Lombok Javadoc shortcuts aren't legal syntax.
+ * Tell Javadoc to output HTML5, the default expected for Java 10 code.
+ */
+javadoc {
+    group "documentation"
+    description "Generates Javadoc API documentation for the de-lomboked source code."
+
+    dependsOn delombok
+    source = OUTPUT_DIR
+    classpath = configurations.compile
+    options.addBooleanOption('html5', true)
+}
+
+/*
+ * Lombok jar, required by plugin.  SHA-256 calculated on separately downloaded
+ * copy.
+ */
+lombok {
+    version = "${property('lombok.version')}"
+    sha256 = "${property('lombok.sha256')}"
+}
+
+/*
+ * Ensure any resources are copied to classpath for consumption.
+ */
+sourceSets {
+    main {
+        output.resourcesDir = "build/classes/java/main"
+    }
+    test {
+        output.resourcesDir = "build/classes/java/test"
+    }
+}
+
+test {
+    group "Verification"
+    description "Runs JBehave tests and styles reports with jbehave-site-resources zip contents."
+
+    def JBEHAVE_REPORT_PATH_PROPERTY = "jbehave.report.path"
+    def JBEHAVE_REPORT_PATH = project.property("${JBEHAVE_REPORT_PATH_PROPERTY}")
+    def JBEHAVE_STYLE_PATH = "${JBEHAVE_REPORT_PATH}/view"
+
+    /*
+     * Want to pass report path to test rather than hardcode it here.  Have to
+     * fudge it by setting as a system property - transferred from project
+     * property in gradle.properties.
+     */
+    systemProperty "${JBEHAVE_REPORT_PATH_PROPERTY}", "${JBEHAVE_REPORT_PATH}"
+
+    doFirst {
+        copy {
+            from(zipTree(jarPath("jbehave-core"))) {
+                include "style/*"
+            }
+            into("${JBEHAVE_STYLE_PATH}")
+        }
+        copy {
+            from(zipTree(jarPath("jbehave-site-resources"))) {
+                include "js/**/*"
+                include "style/**/*"
+                include "images/*"
+            }
+            into("${JBEHAVE_STYLE_PATH}")
+        }
+    }
+}
